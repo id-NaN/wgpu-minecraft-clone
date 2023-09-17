@@ -1,0 +1,10 @@
+[window]
+width = 800
+height = 600
+full_screen = false
+
+[log]
+max_level = "Info"
+
+[graphics]
+fov = 70.0
