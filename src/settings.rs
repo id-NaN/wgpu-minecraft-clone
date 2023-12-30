@@ -1,6 +1,6 @@
-use color_eyre::Result;
 use std::io::ErrorKind;
 
+use color_eyre::Result;
 use log::info;
 use once_cell::sync::Lazy;
 use serde_derive::{Deserialize, Serialize};
@@ -8,19 +8,17 @@ use serde_derive::{Deserialize, Serialize};
 const CONFIG_PATH: &str = "./settings.toml";
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(default)]
-pub struct WindowSettings {
-    pub width: u32,
-    pub height: u32,
-    pub full_screen: bool,
+pub enum WindowMode {
+    Default { width: u32, height: u32 },
+    Maximized,
+    Fullscreen,
 }
 
-impl Default for WindowSettings {
+impl Default for WindowMode {
     fn default() -> Self {
-        Self {
+        Self::Default {
             width: 800,
             height: 600,
-            full_screen: false,
         }
     }
 }
@@ -53,20 +51,42 @@ impl Default for LogSettings {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
+pub struct ShadowSettings {
+    pub shadow_map_resolution: u32,
+    pub shadow_distance: u32,
+}
+impl Default for ShadowSettings {
+    fn default() -> Self {
+        Self {
+            shadow_distance: 128,
+            shadow_map_resolution: 128,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GraphicsSettings {
     pub fov: f32,
+    pub render_distance: u32,
+    pub window: WindowMode,
+    pub shadow: ShadowSettings,
 }
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
-        Self { fov: 70.0 }
+        Self {
+            fov: 70.0,
+            render_distance: 128,
+            window: Default::default(),
+            shadow: Default::default(),
+        }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Settings {
-    pub window: WindowSettings,
     pub log: LogSettings,
     pub graphics: GraphicsSettings,
 }

@@ -1,7 +1,12 @@
-use color_eyre::{eyre::Context, Result};
 use std::path::Path;
 
-pub fn load_shader_module(device: &wgpu::Device, shader_name: &str) -> Result<wgpu::ShaderModule> {
+use color_eyre::eyre::Context;
+use color_eyre::Result;
+
+pub fn load_shader_module(
+    device: &wgpu::Device,
+    shader_name: &str,
+) -> Result<wgpu::ShaderModule> {
     let path = Path::new("assets/shaders")
         .join(shader_name)
         .with_extension("wgsl");
@@ -9,7 +14,9 @@ pub fn load_shader_module(device: &wgpu::Device, shader_name: &str) -> Result<wg
         label: Some(shader_name),
         source: wgpu::ShaderSource::Wgsl(
             std::fs::read_to_string(path)
-                .wrap_err_with(|| format!("Failure loading shader \"{shader_name}\""))?
+                .wrap_err_with(|| {
+                    format!("Failure loading shader \"{shader_name}\"")
+                })?
                 .into(),
         ),
     }))

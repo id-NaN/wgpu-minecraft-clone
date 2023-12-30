@@ -22,14 +22,26 @@ impl BlockSide {
         }
     }
 
-    pub fn direction(&self) -> glm::I16Vec3 {
+    pub fn direction<T: From<i8> + glm::Scalar>(&self) -> glm::TVec3<T> {
         match self {
-            BlockSide::Top => glm::vec3(0, 1, 0),
-            BlockSide::Bottom => glm::vec3(0, -1, 0),
-            BlockSide::North => glm::vec3(0, 0, 1),
-            BlockSide::East => glm::vec3(1, 0, 0),
-            BlockSide::South => glm::vec3(0, 0, -1),
-            BlockSide::West => glm::vec3(-1, 0, 0),
+            BlockSide::Top => {
+                glm::vec3((0_i8).into(), (1_i8).into(), (0_i8).into())
+            }
+            BlockSide::Bottom => {
+                glm::vec3((0_i8).into(), (-1_i8).into(), (0_i8).into())
+            }
+            BlockSide::North => {
+                glm::vec3((0_i8).into(), (0_i8).into(), (1_i8).into())
+            }
+            BlockSide::East => {
+                glm::vec3((1_i8).into(), (0_i8).into(), (0_i8).into())
+            }
+            BlockSide::South => {
+                glm::vec3((0_i8).into(), (0_i8).into(), (-1_i8).into())
+            }
+            BlockSide::West => {
+                glm::vec3((-1_i8).into(), (0_i8).into(), (0_i8).into())
+            }
         }
     }
 }

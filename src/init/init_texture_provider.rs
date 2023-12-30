@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use color_eyre::{eyre::Context, Result};
+use color_eyre::eyre::Context;
+use color_eyre::Result;
 
 use crate::renderer::TextureAtlas;
 
@@ -16,7 +17,9 @@ impl InitTextureProvider {
     }
 
     pub fn texture(&mut self, texture_path: &Path) -> u32 {
-        if let Some(index) = self.texture_names.iter().position(|x| x == texture_path) {
+        if let Some(index) =
+            self.texture_names.iter().position(|x| x == texture_path)
+        {
             index as u32
         } else {
             let index = self.texture_names.len() as u32;
@@ -26,12 +29,11 @@ impl InitTextureProvider {
     }
 
     pub fn atlas(&self, texture_size: u32) -> Result<TextureAtlas> {
-        dbg!(self.texture_names.len());
-        let mut atlas = TextureAtlas::new(texture_size, self.texture_names.len() as u32);
+        let mut atlas =
+            TextureAtlas::new(texture_size, self.texture_names.len() as u32);
         for texture in &self.texture_names {
             atlas
                 .add_path(texture)
-                .wrap_err("")
                 .wrap_err("Failed populating texture atlas!")?;
         }
         Ok(atlas)

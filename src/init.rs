@@ -2,13 +2,13 @@ use std::path::Path;
 
 use color_eyre::Result;
 
-use crate::{
-    renderer::{
-        model::{CubeBlock, InitBlockMeshGenerator},
-        GameRenderData,
-    },
-    world::{BlockType, GameData},
+use crate::renderer::model::{
+    CubeBlock,
+    InitBlockMeshGenerator,
+    InvisibleBlock,
 };
+use crate::renderer::GameRenderData;
+use crate::world::{BlockType, GameData};
 
 mod init_texture_provider;
 
@@ -20,9 +20,18 @@ pub fn initialize() -> Result<(GameData, GameRenderData)> {
 
     let mut texture_provider = InitTextureProvider::new();
 
+    block_types.push(BlockType::new("air"));
+    mesh_generators.push(Box::new(InvisibleBlock::new()));
+
     block_types.push(BlockType::new("cobblestone"));
     mesh_generators.push(Box::new(CubeBlock::new(
         Path::new("assets/textures/blocks/cobblestone.png"),
+        &mut texture_provider,
+    )));
+
+    block_types.push(BlockType::new("dirt"));
+    mesh_generators.push(Box::new(CubeBlock::new(
+        Path::new("assets/textures/blocks/dirt.png"),
         &mut texture_provider,
     )));
 

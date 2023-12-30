@@ -1,4 +1,5 @@
-use color_eyre::{eyre::ContextCompat, Result};
+use color_eyre::eyre::ContextCompat;
+use color_eyre::Result;
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -6,11 +7,11 @@ use wgpu::util::DeviceExt;
 pub struct Vertex {
     pub position: glm::Vec3,
     pub tex_coords: glm::Vec2,
+    pub normal: glm::Vec3,
 }
 
 impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2];
+    const ATTRIBS: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x3];
 
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
@@ -80,7 +81,11 @@ impl Mesh {
         self.indices.push(base_index + 3);
     }
 
-    pub fn update_buffers(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    pub fn update_buffers(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) {
         update_buffer(
             &mut self.vertex_buffer,
             bytemuck::cast_slice(&self.vertices),

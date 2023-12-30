@@ -1,0 +1,7 @@
+imports_layout = "HorizontalVertical"
+imports_granularity = "Module"
+group_imports = "StdExternalCrate"
+
+max_width = 79
+newline_style = "Unix"
+reorder_impl_items = true

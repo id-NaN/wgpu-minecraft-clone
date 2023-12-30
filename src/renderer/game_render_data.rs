@@ -1,4 +1,5 @@
-use super::{model::BlockMeshGenerator, TextureAtlas};
+use super::model::BlockMeshGenerator;
+use super::TextureAtlas;
 
 pub struct GameRenderData {
     mesh_generators: Vec<Box<dyn BlockMeshGenerator>>,

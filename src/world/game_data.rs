@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use color_eyre::{eyre::ContextCompat, Result};
+use color_eyre::eyre::ContextCompat;
+use color_eyre::Result;
 
 use super::BlockType;
 
@@ -11,6 +12,7 @@ pub struct GameData {
 
 impl GameData {
     pub fn new(block_types: Vec<BlockType>) -> GameData {
+        assert_eq!(block_types[0].name(), "air", "First block must be Air");
         Self {
             block_type_map: block_types
                 .iter()
