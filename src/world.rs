@@ -22,12 +22,12 @@ impl World {
         }
     }
 
-    pub fn set_chunk(
-        &mut self,
-        position: IVec2,
-        chunk: Chunk,
-    ) -> Option<Chunk> {
-        self.chunks.insert(position, chunk)
+    pub fn set_chunk(&mut self, chunk: Chunk) -> Option<Chunk> {
+        self.chunks.insert(chunk.position(), chunk)
+    }
+
+    pub fn get_chunk(&self, position: IVec2) -> Option<&Chunk> {
+        self.chunks.get(&position)
     }
 
     pub fn remove_chunk(
@@ -36,10 +36,6 @@ impl World {
         chunk: Chunk,
     ) -> Option<Chunk> {
         self.chunks.remove(&position)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&IVec2, &Chunk)> {
-        self.chunks.iter()
     }
 
     pub fn get_block(&self, position: IVec3) -> Option<Block> {
@@ -75,4 +71,9 @@ impl World {
             chunk_block_position.z as i32 + chunk_position.y * 16,
         )
     }
+}
+
+pub enum ChunkEvent {
+    Update(IVec2),
+    Unload(IVec2),
 }

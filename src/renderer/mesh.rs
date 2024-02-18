@@ -29,14 +29,18 @@ fn update_buffer(
     queue: &wgpu::Queue,
     usage: wgpu::BufferUsages,
 ) {
-    if let Some(buffer) = buffer && buffer.size() >= data.len() as u64 {
+    if let Some(buffer) = buffer
+        && buffer.size() >= data.len() as u64
+    {
         queue.write_buffer(buffer, 0, data);
     } else {
-        *buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: None,
-            contents: data,
-            usage
-        }));
+        *buffer = Some(device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: data,
+                usage,
+            },
+        ));
     }
 }
 

@@ -35,6 +35,12 @@ pub fn initialize() -> Result<(GameData, GameRenderData)> {
         &mut texture_provider,
     )));
 
+    block_types.push(BlockType::new("stone"));
+    mesh_generators.push(Box::new(CubeBlock::new(
+        Path::new("assets/textures/blocks/stone.png"),
+        &mut texture_provider,
+    )));
+
     assert!(block_types.len() == mesh_generators.len());
 
     let atlas = texture_provider.atlas(16)?;

@@ -44,4 +44,20 @@ impl BlockSide {
             }
         }
     }
+
+    pub fn flat_direction<T: From<i8> + glm::Scalar + Clone>(
+        &self,
+    ) -> glm::TVec2<T> {
+        let direction = self.direction::<T>();
+        glm::vec2(direction.x.clone(), direction.z.clone())
+    }
+
+    pub fn cardinal_sides() -> impl Iterator<Item = Self> {
+        [Self::North, Self::East, Self::South, Self::West].into_iter()
+    }
+
+    pub fn cardinal_directions<T: From<i8> + glm::Scalar>(
+    ) -> impl Iterator<Item = glm::TVec2<T>> {
+        Self::cardinal_sides().map(|side| side.direction().xz())
+    }
 }

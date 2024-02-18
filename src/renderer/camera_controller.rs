@@ -1,6 +1,6 @@
-use winit::event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent};
+use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::keyboard::{KeyCode, PhysicalKey};
 
-use super::camera::PerspectiveCamera;
 use super::Camera;
 
 pub struct CameraController {
@@ -75,47 +75,47 @@ impl CameraController {
         }
 
         camera.set_position(self.position);
-        camera.set_rotation(rotation);
+        camera.set_rotation(rotation.inverse());
     }
 
     pub fn handle_event(&mut self, event: &WindowEvent) -> bool {
         match event {
             WindowEvent::KeyboardInput {
-                input:
-                    KeyboardInput {
+                event:
+                    KeyEvent {
                         state,
-                        virtual_keycode: Some(keycode),
+                        physical_key: PhysicalKey::Code(keycode),
                         ..
                     },
                 ..
             } => {
                 let pressed = *state == ElementState::Pressed;
                 match keycode {
-                    VirtualKeyCode::W => {
+                    KeyCode::KeyW => {
                         self.forward_pressed = pressed;
                         true
                     }
-                    VirtualKeyCode::S => {
+                    KeyCode::KeyS => {
                         self.backward_pressed = pressed;
                         true
                     }
-                    VirtualKeyCode::Space => {
+                    KeyCode::Space => {
                         self.up_pressed = pressed;
                         true
                     }
-                    VirtualKeyCode::LShift => {
+                    KeyCode::ShiftLeft => {
                         self.down_pressed = pressed;
                         true
                     }
-                    VirtualKeyCode::A => {
+                    KeyCode::KeyA => {
                         self.left_pressed = pressed;
                         true
                     }
-                    VirtualKeyCode::D => {
+                    KeyCode::KeyD => {
                         self.right_pressed = pressed;
                         true
                     }
-                    VirtualKeyCode::LControl => {
+                    KeyCode::ControlLeft => {
                         self.control_pressed = pressed;
                         true
                     }

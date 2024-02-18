@@ -17,8 +17,8 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(1) world_position: vec3<f32>,
     @location(0) tex_coords: vec2<f32>,
+    @location(1) world_position: vec3<f32>,
     @location(2) world_normal: vec3<f32>,
 }
 
@@ -42,6 +42,9 @@ var<uniform> light: LightUniform;
 @fragment
 fn fs_main(vertex: VertexOutput) -> @location(0) vec4<f32> {
     let object_color = textureSample(atlas, atlas_sampler, vertex.tex_coords);
+    if object_color.a == 0.0 {
+        discard;
+    }
     let ambient_strength = 0.1;
     let diffuse_strength = max(dot(vertex.world_normal, light.direction), 0.0);
     let result = (ambient_strength + diffuse_strength) * light.color * object_color.xyz;

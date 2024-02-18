@@ -8,6 +8,11 @@ mod texture;
 pub mod texture_atlas;
 mod world;
 
+use std::collections::{HashMap, VecDeque};
+use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex};
+use std::thread::{self};
+
 use camera::Camera;
 use camera_controller::CameraController;
 use color_eyre::eyre::ContextCompat;
@@ -21,11 +26,15 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::{Window, WindowBuilder};
 
-use self::camera::{OrthographicCamera, PerspectiveCamera};
+use self::camera::{
+    ObliqueOrthographicCamera,
+    OrthographicCamera,
+    PerspectiveCamera,
+};
 pub use self::texture_atlas::TextureAtlas;
-use self::world::mesh_world;
+use self::world::{ChunkMeshEvent, RenderWorld};
 use crate::settings::SETTINGS;
-use crate::world::World;
+use crate::world::{ChunkEvent, World};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -61,24 +70,28 @@ fn create_render_pipeline(
     depth_format: Option<wgpu::TextureFormat>,
     vertex_layouts: &[wgpu::VertexBufferLayout],
     shader: &wgpu::ShaderModule,
+    vertex_entry: &str,
+    fragment_entry: &str,
 ) -> wgpu::RenderPipeline {
-    let fragment_targets =
-        [color_format.map(|format| wgpu::ColorTargetState {
+    let fragment_targets = match color_format {
+        Some(format) => vec![Some(wgpu::ColorTargetState {
             format: format,
             blend: Some(wgpu::BlendState::REPLACE),
             write_mask: wgpu::ColorWrites::all(),
-        })];
+        })],
+        None => vec![],
+    };
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render pipeline"),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
             module: &shader,
-            entry_point: "vs_main",
+            entry_point: vertex_entry,
             buffers: vertex_layouts,
         },
-        fragment: color_format.map(|_| wgpu::FragmentState {
+        fragment: Some(wgpu::FragmentState {
             module: &shader,
-            entry_point: "fs_main",
+            entry_point: fragment_entry,
             targets: &fragment_targets,
         }),
         primitive: wgpu::PrimitiveState {
@@ -106,21 +119,22 @@ fn create_render_pipeline(
     })
 }
 
-pub struct Renderer {
-    surface: wgpu::Surface,
+pub fn calc_light_direction(frame: u64) -> na::UnitVector3<f32> {
+    na::Unit::new_normalize(glm::rotate_vec3(
+        &glm::vec3(0.0, 1.0, 0.0),
+        10000 as f32 / 500.0,
+        &glm::vec3(1.0, 0.5, 0.0).normalize(),
+    ))
+}
+pub struct Renderer<'a> {
+    surface: wgpu::Surface<'a>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
-    window: Window,
+    window: &'a Window,
     depth_texture: Texture,
     pipeline: wgpu::RenderPipeline,
-    depth_camera: Box<dyn Camera>,
-    depth_camera_uniform: CameraUniform,
-    depth_camera_buffer: wgpu::Buffer,
-    depth_camera_bind_group: wgpu::BindGroup,
-    shadow_depth_texture: Texture,
-    shadow_pipeline: wgpu::RenderPipeline,
     camera: Box<dyn Camera>,
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
@@ -129,45 +143,46 @@ pub struct Renderer {
     light_uniform: LightUniform,
     light_buffer: wgpu::Buffer,
     light_bind_group: wgpu::BindGroup,
-    world_meshes: Vec<Mesh>,
     texture_atlas_image: Texture,
     texture_atlas_bind_group: wgpu::BindGroup,
+    chunk_queue: Arc<Mutex<VecDeque<ChunkMeshEvent>>>,
+    chunk_meshes: HashMap<glm::IVec2, Mesh>,
+    frame_count: u64,
 }
 
-impl Renderer {
-    async fn new(
-        window: Window,
-        world: World,
+impl<'a> Renderer<'a> {
+    fn new(
+        window: &'a Window,
         render_data: GameRenderData,
-    ) -> Result<Self> {
+        world: Arc<Mutex<World>>,
+    ) -> Result<(Self, RenderWorld)> {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
-            dx12_shader_compiler: Default::default(),
+            ..Default::default()
         });
 
-        let surface = unsafe { instance.create_surface(&window) }?;
+        let surface = unsafe { instance.create_surface(window) }?;
 
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
+        let adapter = pollster::block_on(instance.request_adapter(
+            &wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 force_fallback_adapter: false,
                 compatible_surface: Some(&surface),
-            })
-            .await
-            .wrap_err("Failure requesting adapter")?;
+            },
+        ))
+        .wrap_err("Failure requesting adapter")?;
 
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
-                    label: None,
-                },
-                None,
-            )
-            .await?;
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                required_features:
+                    wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER,
+                required_limits: wgpu::Limits::default(),
+                label: None,
+            },
+            None,
+        ))?;
 
         let surface_capabilities = surface.get_capabilities(&adapter);
         let surface_format = surface_capabilities
@@ -178,6 +193,7 @@ impl Renderer {
             .unwrap_or(surface_capabilities.formats[0]);
 
         let config = wgpu::SurfaceConfiguration {
+            desired_maximum_frame_latency: 2,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: size.width,
@@ -188,26 +204,19 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
-        let mut world_meshes = mesh_world(&world, &render_data);
-        for mesh in world_meshes.iter_mut() {
-            mesh.update_buffers(&device, &queue);
-        }
-
-        // let mut camera = Box::new(PerspectiveCamera::new(
-        //     size.width as f32,
-        //     size.height as f32,
-        //     0.1,
-        //     1000.0,
-        // ));
-        let mut camera =
-            Box::new(OrthographicCamera::new(1000.0, 500.0, 500.0));
-        let mut camera_controller = CameraController::new();
-        let depth_position = glm::vec3(200.0, 350.0, 150.0);
-        // camera_controller.set_position(glm::vec3(0.0, 100.0, 0.0));
-        camera_controller.set_position(depth_position);
-        camera_controller.set_rotation(na::UnitQuaternion::new_normalize(
-            glm::quat_look_at_lh(&depth_position, &glm::vec3(0.0, 1.0, 0.0)),
+        let mut camera = Box::new(PerspectiveCamera::new(
+            (size.width as f32) / (size.height as f32),
+            0.1,
+            1000.0,
         ));
+        // let mut camera = Box::new(ObliqueOrthographicCamera::new(
+        //     100.0,
+        //     100.0,
+        //     (size.width as f32) / (size.height as f32),
+        //     glm::vec3(0.0, 0.0, 1.0),
+        // ));
+        let mut camera_controller = CameraController::new();
+        camera_controller.set_position(glm::vec3(0.0, 80.0, 0.0));
         camera_controller.update(camera.as_mut());
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_projection(camera.as_ref());
@@ -234,7 +243,6 @@ impl Renderer {
                 }],
             },
         );
-
         let camera_bind_group =
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Camera bind group"),
@@ -245,40 +253,9 @@ impl Renderer {
                 }],
             });
 
-        let mut depth_camera = Box::new(PerspectiveCamera::new(
-            1.0, 1.0, 1.0,
-            1000.0,
-            // SETTINGS.graphics.shadow.shadow_distance as f32 * 2.0,
-            // SETTINGS.graphics.shadow.shadow_distance as f32 * 2.0,
-        ));
-        let depth_position = glm::vec3(400.0, 700.0, 300.0);
-        depth_camera.set_position(depth_position);
-        depth_camera.set_rotation(na::UnitQuaternion::new_normalize(
-            glm::quat_look_at(&-depth_position, &glm::vec3(0.0, 1.0, 0.0)),
-        ));
-        let mut depth_camera_uniform = CameraUniform::new();
-        depth_camera_uniform.update_view_projection(depth_camera.as_ref());
-        let depth_camera_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Depth Camera uniform"),
-                usage: wgpu::BufferUsages::UNIFORM
-                    | wgpu::BufferUsages::COPY_DST,
-                contents: bytemuck::cast_slice(&[depth_camera_uniform]),
-            });
-
-        let depth_camera_bind_group =
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Depth Camera bind group"),
-                layout: &camera_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: depth_camera_buffer.as_entire_binding(),
-                }],
-            });
-
         let light_uniform = LightUniform {
             direction: nalgebra::Unit::new_normalize(glm::vec3(0.4, 0.7, 0.3)),
-            color: glm::vec3(1.0, 1.0, 1.0),
+            color: glm::vec3(1.5, 1.5, 1.5),
             _pad_0: 0,
             _pad_1: 0,
         };
@@ -320,9 +297,9 @@ impl Renderer {
             Some("Block Atlas"),
         );
 
-        let texture_atlas_bind_group_layout = device.create_bind_group_layout(
+        let atlas_bind_group_layout = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("Texture atlas bind group layout"),
+                label: Some("Atlas bind group layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -351,7 +328,7 @@ impl Renderer {
         let texture_atlas_bind_group =
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Texture atlas bind group"),
-                layout: &texture_atlas_bind_group_layout,
+                layout: &atlas_bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -375,14 +352,14 @@ impl Renderer {
             Some("Depth Texture"),
         );
 
-        let shader = load_shader_module(&device, "main")?;
+        let shader = load_shader_module(&device, "main", &[])?;
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render pipeline layout"),
                 bind_group_layouts: &[
                     &camera_bind_group_layout,
-                    &texture_atlas_bind_group_layout,
+                    &atlas_bind_group_layout,
                     &light_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
@@ -394,57 +371,38 @@ impl Renderer {
             Some(Texture::DEPTH_FORMAT),
             &[Vertex::desc()],
             &shader,
+            "vs_main",
+            "fs_main",
         );
 
-        let shadow_depth_texture = Texture::create_depth_texture(
-            &device,
-            SETTINGS.graphics.shadow.shadow_map_resolution,
-            SETTINGS.graphics.shadow.shadow_map_resolution,
-            Some("Shadow Depth Texture"),
-        );
+        let (render_world, chunk_queue) = RenderWorld::new(world, render_data);
 
-        let shadow_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Shadow pipeline layout"),
-                bind_group_layouts: &[&camera_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-        let shadow_pipeline = create_render_pipeline(
-            &device,
-            &shadow_pipeline_layout,
-            None,
-            Some(Texture::DEPTH_FORMAT),
-            &[Vertex::desc()],
-            &shader,
-        );
-
-        Ok(Self {
-            window,
-            size,
-            surface,
-            device,
-            queue,
-            config,
-            pipeline,
-            camera,
-            camera_uniform,
-            camera_buffer,
-            camera_bind_group,
-            camera_controller,
-            light_uniform,
-            light_buffer,
-            light_bind_group,
-            depth_texture,
-            world_meshes,
-            texture_atlas_image,
-            texture_atlas_bind_group,
-            shadow_depth_texture,
-            shadow_pipeline,
-            depth_camera,
-            depth_camera_bind_group,
-            depth_camera_buffer,
-            depth_camera_uniform,
-        })
+        Ok((
+            Self {
+                window,
+                size,
+                surface,
+                device,
+                queue,
+                config,
+                pipeline,
+                camera,
+                camera_uniform,
+                camera_buffer,
+                camera_bind_group,
+                camera_controller,
+                light_uniform,
+                light_buffer,
+                light_bind_group,
+                depth_texture,
+                texture_atlas_image,
+                texture_atlas_bind_group,
+                chunk_queue,
+                chunk_meshes: HashMap::new(),
+                frame_count: 0,
+            },
+            render_world,
+        ))
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -459,8 +417,9 @@ impl Renderer {
                 self.config.height,
                 Some("Depth Texture"),
             );
-            // self.camera
-            //     .set_size(new_size.width as f32, new_size.height as f32);
+            self.camera.set_aspect_ratio(
+                (new_size.width as f32) / (new_size.height as f32),
+            );
         }
     }
 
@@ -487,9 +446,20 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
+        let mut light_direction = calc_light_direction(self.frame_count);
+        if light_direction.y < 0.0 {
+            light_direction = -light_direction
+        }
+        self.light_uniform.direction = light_direction;
+        self.queue.write_buffer(
+            &self.light_buffer,
+            0,
+            bytemuck::cast_slice(&[self.light_uniform]),
+        );
     }
 
     fn render(&mut self) -> Result<()> {
+        self.frame_count += 1;
         match self.surface.get_current_texture() {
             Ok(output) => {
                 let view = output
@@ -501,45 +471,6 @@ impl Renderer {
                     },
                 );
                 {
-                    {
-                        let mut shadow_pass = encoder.begin_render_pass(
-                            &wgpu::RenderPassDescriptor {
-                                label: Some("Shadow pass"),
-                                color_attachments: &[],
-                                depth_stencil_attachment: Some(
-                                    wgpu::RenderPassDepthStencilAttachment {
-                                        view: self.shadow_depth_texture.view(),
-                                        depth_ops: Some(wgpu::Operations {
-                                            load: wgpu::LoadOp::Clear(1.0),
-                                            store: true,
-                                        }),
-                                        stencil_ops: None,
-                                    },
-                                ),
-                            },
-                        );
-                        shadow_pass.set_pipeline(&self.shadow_pipeline);
-                        shadow_pass.set_bind_group(
-                            0,
-                            &self.depth_camera_bind_group,
-                            &[],
-                        );
-                        for mesh in &self.world_meshes {
-                            shadow_pass.set_vertex_buffer(
-                                0,
-                                mesh.vertex_buffer()?.slice(..),
-                            );
-                            shadow_pass.set_index_buffer(
-                                mesh.index_buffer()?.slice(..),
-                                wgpu::IndexFormat::Uint32,
-                            );
-                            shadow_pass.draw_indexed(
-                                0..mesh.index_count(),
-                                0,
-                                0..1,
-                            );
-                        }
-                    }
                     {
                         let mut render_pass = encoder.begin_render_pass(
                             &wgpu::RenderPassDescriptor {
@@ -557,7 +488,7 @@ impl Renderer {
                                                     a: 1.0,
                                                 },
                                             ),
-                                            store: true,
+                                            store: wgpu::StoreOp::Store,
                                         },
                                     },
                                 )],
@@ -566,11 +497,12 @@ impl Renderer {
                                         view: self.depth_texture.view(),
                                         depth_ops: Some(wgpu::Operations {
                                             load: wgpu::LoadOp::Clear(1.0),
-                                            store: true,
+                                            store: wgpu::StoreOp::Store,
                                         }),
                                         stencil_ops: None,
                                     },
                                 ),
+                                ..Default::default()
                             },
                         );
                         render_pass.set_pipeline(&self.pipeline);
@@ -589,7 +521,7 @@ impl Renderer {
                             &self.light_bind_group,
                             &[],
                         );
-                        for mesh in &self.world_meshes {
+                        for mesh in self.chunk_meshes.values() {
                             render_pass.set_vertex_buffer(
                                 0,
                                 mesh.vertex_buffer()?.slice(..),
@@ -621,16 +553,45 @@ impl Renderer {
                 log::error!("Error: {e}")
             }
         };
+        while let Some(event) = self.chunk_queue.lock().unwrap().pop_front() {
+            match event {
+                ChunkMeshEvent::Update { position, mut mesh } => {
+                    mesh.update_buffers(&self.device, &self.queue);
+                    self.chunk_meshes.insert(position, mesh)
+                }
+                ChunkMeshEvent::Unload(position) => {
+                    self.chunk_meshes.remove(&position)
+                }
+            };
+        }
         Ok(())
+    }
+
+    fn run_mesh_thread(
+        render_world: RenderWorld,
+        chunk_receiver: Receiver<ChunkEvent>,
+    ) {
+        let mut render_world = render_world;
+        let mut chunk_receiver = chunk_receiver;
+        while let Ok(event) = chunk_receiver.recv() {
+            render_world.handle_chunk_event(event);
+        }
     }
 }
 
-pub fn run(world: World, render_data: GameRenderData) -> Result<()> {
-    let event_loop = EventLoop::new();
+pub fn run(
+    render_data: GameRenderData,
+    chunk_receiver: Receiver<ChunkEvent>,
+    world: Arc<Mutex<World>>,
+) -> Result<()> {
+    let event_loop = EventLoop::new()?;
     let window = WindowBuilder::new().build(&event_loop)?;
     match SETTINGS.graphics.window {
         crate::settings::WindowMode::Default { width, height } => {
-            window.set_inner_size(winit::dpi::PhysicalSize { width, height });
+            window.request_inner_size(winit::dpi::PhysicalSize {
+                width,
+                height,
+            });
         }
         crate::settings::WindowMode::Maximized => {
             window.set_maximized(true);
@@ -641,19 +602,15 @@ pub fn run(world: World, render_data: GameRenderData) -> Result<()> {
             )))
         }
     }
-    let mut renderer =
-        pollster::block_on(Renderer::new(window, world, render_data))?;
-    renderer.window.set_cursor_visible(false);
-    event_loop.run(move |event, _, control_flow| match event {
-        winit::event::Event::RedrawRequested(window_id)
-            if window_id == renderer.window.id() =>
-        {
-            renderer.update();
-            renderer.render().unwrap();
-        }
-        winit::event::Event::MainEventsCleared => {
-            renderer.window.request_redraw();
-        }
+    let (mut renderer, render_world) =
+        Renderer::new(&window, render_data, world)?;
+    window.set_cursor_visible(false);
+
+    thread::scope(move |s| {
+        s.spawn(move || {
+            Renderer::run_mesh_thread(render_world, chunk_receiver)
+        });
+        event_loop.run(move |event, control_flow| match event {
         winit::event::Event::WindowEvent {
             window_id,
             ref event,
@@ -664,10 +621,15 @@ pub fn run(world: World, render_data: GameRenderData) -> Result<()> {
                         renderer.resize(*physical_size)
                     }
                     WindowEvent::ScaleFactorChanged {
-                        new_inner_size, ..
-                    } => renderer.resize(**new_inner_size),
-                    winit::event::WindowEvent::CloseRequested => {
-                        *control_flow = ControlFlow::Exit
+                        ..
+                    } => renderer.resize(renderer.window.inner_size()),
+                    WindowEvent::CloseRequested => {
+                        control_flow.exit();
+                    }
+                    WindowEvent::RedrawRequested => {
+                        renderer.update();
+                        renderer.render().unwrap();
+                        renderer.window.request_redraw();
                     }
                     _ => {}
                 }
@@ -678,5 +640,7 @@ pub fn run(world: World, render_data: GameRenderData) -> Result<()> {
             ..
         } => renderer.mouse_event(glm::vec2(x as f32, y as f32)).unwrap(),
         _ => {}
-    });
+    })
+    })?;
+    Ok(())
 }

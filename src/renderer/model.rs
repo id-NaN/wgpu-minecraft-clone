@@ -8,7 +8,7 @@ use super::{Mesh, TextureAtlas};
 use crate::util::BlockSide;
 use crate::world::Block;
 
-pub trait BlockMeshGenerator {
+pub trait BlockMeshGenerator: Sync + Send {
     fn mesh_always(
         &self,
         _position: glm::IVec3,

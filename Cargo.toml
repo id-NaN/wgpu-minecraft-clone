@@ -17,10 +17,11 @@ pollster = "0.3.0"
 serde = "1.0.188"
 serde_derive = "1.0.188"
 toml = "0.8.0"
-wgpu = "0.17.0"
-winit = "0.28.6"
+wgpu = "0.19.1"
+winit = "0.29.10"
 image = { version = "0.24.7", default-features = false, features = ["png"] }
-strum = { version = "0.25.0", features = ["derive"] }
+strum = { version = "0.26.1", features = ["derive"] }
 color-eyre = "0.6.2"
 noise = "0.8.2"
 lazy_static = "1.4.0"
+regex = "1.10.2"

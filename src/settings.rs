@@ -51,26 +51,10 @@ impl Default for LogSettings {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
-pub struct ShadowSettings {
-    pub shadow_map_resolution: u32,
-    pub shadow_distance: u32,
-}
-impl Default for ShadowSettings {
-    fn default() -> Self {
-        Self {
-            shadow_distance: 128,
-            shadow_map_resolution: 128,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(default)]
 pub struct GraphicsSettings {
     pub fov: f32,
     pub render_distance: u32,
     pub window: WindowMode,
-    pub shadow: ShadowSettings,
 }
 
 impl Default for GraphicsSettings {
@@ -79,7 +63,6 @@ impl Default for GraphicsSettings {
             fov: 70.0,
             render_distance: 128,
             window: Default::default(),
-            shadow: Default::default(),
         }
     }
 }
